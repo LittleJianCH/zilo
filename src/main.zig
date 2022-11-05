@@ -7,12 +7,13 @@ const C = @cImport({
 });
 
 pub fn main() void {
-    if (raw.enableRawMode()) |orig| {
-        defer raw.disableRawMode(orig);
-    } else |err| {
-        std.debug.print("Failed to enable raw mode: {}\n", .{err});
-        return;
-    }
+    var orig = raw.enableRawMode() catch |err| switch (err) {
+        error.NotATerminal => {
+            std.debug.print("Failed to enable raw mode: {}\n", .{err});
+            return;
+        }
+    };
+    defer raw.disableRawMode(orig);
 
     while (true) {
         var c: u8 = 0;
