@@ -9,7 +9,9 @@ const C = @cImport({
 
 const ziloVerison = "0.0.1";
 
-const Window = struct {
+const Config = struct {
+    cx: u8,
+    cy: u8,
     row: u16,
     col: u16,
 };
@@ -22,7 +24,7 @@ fn ctrlKey(key: u8) u8 {
     return key & 0x1f;
 }
 
-fn getWindow() Window {
+fn getWindow() struct { row: u16, col: u16 } {
     var ws: C.winsize = undefined;
 
     if (C.getWinsize(&ws) == -1 or ws.ws_col == 0) {
@@ -32,40 +34,42 @@ fn getWindow() Window {
     }
 }
 
-fn editorRefreshScreen(win: Window) EditorError!void {
-    struct { fn errFn(w: Window) !void {
+fn editorRefreshScreen(cfg: *const Config) EditorError!void {
+    struct { fn errFn(c: *const Config) !void {
         var buf = std.ArrayList(u8).init(std.heap.page_allocator);
         defer buf.clearAndFree();
 
+        try buf.appendSlice("\x1b[?25l");
         try buf.appendSlice("\x1b[2J");
         try buf.appendSlice("\x1b[H");
 
-        try editorDrawRows(w, &buf);
+        try editorDrawRows(c, &buf);
 
-        try buf.appendSlice("\x1b[H");
+        var cmdBuf: [32]u8 = undefined;
+        var cmd = try std.fmt.bufPrint(&cmdBuf, "\x1b[{};{}H", .{c.cy + 1, c.cx + 1});
+        try buf.appendSlice(cmd);
+
+        try buf.appendSlice("\x1b[?25h");
 
         _ = C.write(1, buf.items.ptr, buf.items.len);
-    } }.errFn(win) catch return EditorError.DrawFail;
+    } }.errFn(cfg) catch return EditorError.DrawFail;
 }
 
-fn editorDrawRows(win: Window, buf: *std.ArrayList(u8)) !void {
+fn editorDrawRows(cfg: *const Config, buf: *std.ArrayList(u8)) !void {
     var i: usize = 0;
-    while (i < win.row) : (i += 1) {
-        if (i == win.row / 3) {
+    while (i < cfg.row) : (i += 1) {
+        if (i == cfg.row / 3) {
             var welcomeBuf: [80]u8 = undefined;
-            var welcome = try std.fmt.bufPrint(welcomeBuf[0..], "Welcome to Zilo {s}!", .{ ziloVerison });
-
-            if (welcome.len > win.col) {
-                welcome = welcome[0..win.col];
+            var welcome = try std.fmt.bufPrint(&welcomeBuf, "Welcome to Zilo {s}!", .{ ziloVerison });
+            if (welcome.len > cfg.col) {
+                welcome = welcome[0..cfg.col];
             }
 
-            var padding = (win.col - welcome.len) / 2;
-
+            var padding = (cfg.col - welcome.len) / 2;
             if (padding != 0) {
                 try buf.appendSlice("~");
                 padding -= 1;
             }
-
             while (padding > 0) : (padding -= 1) {
                 try buf.appendSlice(" ");
             }
@@ -75,7 +79,7 @@ fn editorDrawRows(win: Window, buf: *std.ArrayList(u8)) !void {
             try buf.appendSlice("~");
         }
 
-        if (i + 1 < win.row) {
+        if (i + 1 < cfg.row) {
             try buf.appendSlice("\r\n");
         }
     }
@@ -93,13 +97,46 @@ fn editorReadKey() EditorError!u8 {
     return c;
 }
 
-pub fn editorProgress() EditorError!void {
+fn editorMoveCursor(cfg: * Config, key: u8) void {
+    switch (key) {
+        'h' => if (cfg.cx != 0) { cfg.cx -= 1; },
+        'j' => if (cfg.cy != cfg.row - 1) { cfg.cy += 1; },
+        'k' => if (cfg.cy != 0) { cfg.cy -= 1; },
+        'l' => if (cfg.cx != cfg.col - 1) { cfg.cx += 1; },
+        else => unreachable,
+    }
+}
+
+fn initEditor() Config {
     const win = getWindow();
 
+    return Config {
+        .cx = 0,
+        .cy = 0,
+        .row = win.row,
+        .col = win.col,
+    };
+}
+
+fn editorExit() void {
+    _ = C.write(C.STDIN_FILENO, "\x1b[?25l", 6);
+    _ = C.write(C.STDIN_FILENO, "\x1b[H", 3);
+}
+
+pub fn editorProgress() EditorError!void {
+    var config = initEditor();
+
     while (true) {
-        try editorRefreshScreen(win);
+        try editorRefreshScreen(&config);
 
         const c = try editorReadKey();
-        if (c == ctrlKey('q')) break;
+        switch (c) {
+            ctrlKey('q') => {
+                editorExit();
+                return;
+            },
+            'h', 'j', 'k', 'l' => editorMoveCursor(&config, c),
+            else => {},
+        }
     }
 }
