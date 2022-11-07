@@ -4,11 +4,9 @@ const editor = @import("editor.zig");
 const raw = @import("rawMode.zig");
 
 pub fn main() void {
-    const orig = raw.enableRawMode() catch |err| switch (err) {
-        error.NotATerminal => {
-            std.debug.print("Failed to enable raw mode: {}\n", .{err});
-            return;
-        }
+    const orig = raw.enableRawMode() catch |err| {
+        std.debug.print("Failed to enable raw mode: {}\n", .{err});
+        return;
     };
     defer raw.disableRawMode(orig);
 
