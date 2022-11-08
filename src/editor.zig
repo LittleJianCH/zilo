@@ -16,6 +16,7 @@ fn ArrayList2D(comptime T: type) type {
 const Config = struct {
     cx: u8,
     cy: u8,
+    cur: u8, // the first line on the screen
     row: u16,
     col: u16,
     text: ArrayList2D(u8),
@@ -62,7 +63,7 @@ fn editorRefreshScreen(cfg: *const Config) EditorError!void {
 
 fn editorDraw(cfg: *const Config, buf: *std.ArrayList(u8)) !void {
     var i: usize = 0;
-    for (cfg.text.items) |row| {
+    for (cfg.text.items[cfg.cur..]) |row| {
         i += 1;
         if (i == cfg.row) break;
 
@@ -116,8 +117,20 @@ fn editorReadKey() EditorError!u8 {
 fn editorMoveCursor(cfg: * Config, key: u8) void {
     switch (key) {
         'h' => if (cfg.cx != 0) { cfg.cx -= 1; },
-        'j' => if (cfg.cy != cfg.row - 1) { cfg.cy += 1; },
-        'k' => if (cfg.cy != 0) { cfg.cy -= 1; },
+        'j' => {
+            const ry = cfg.cy + cfg.cur;
+            const row = std.mem.min(u64, &[_]u64{
+                cfg.row, cfg.text.items.len - cfg.cur
+            });
+            if (cfg.cy != row - 1) { cfg.cy += 1; }
+            else if (cfg.cy == cfg.row - 1 and ry != cfg.text.items.len - 1) {
+                cfg.cur += 1;
+            }
+        },
+        'k' => {
+            if (cfg.cy != 0) { cfg.cy -= 1; }
+            else if (cfg.cur != 0) { cfg.cur -= 1; }
+        },
         'l' => if (cfg.cx != cfg.col - 1) { cfg.cx += 1; },
         else => unreachable,
     }
@@ -129,6 +142,7 @@ fn editorInit() Config {
     return Config {
         .cx = 0,
         .cy = 0,
+        .cur = 0,
         .row = win.row,
         .col = win.col,
         .text = ArrayList2D(u8).init(std.heap.page_allocator),
@@ -150,7 +164,7 @@ fn editorOpenFile(cfg: *Config, filename: []const u8) !void {
         var file = try std.fs.cwd().openFile(f, .{});
         defer file.close();
 
-        const bufferSize = 1024;
+        const bufferSize = 40960;
         const allocator = std.heap.page_allocator;
         const fileBuf = try file.readToEndAlloc(allocator, bufferSize);
         defer allocator.free(fileBuf);
@@ -175,7 +189,7 @@ pub fn editorProgress() EditorError!void {
     var config = editorInit();
     defer editorExit(&config);
 
-    try editorOpenFile(&config, "test.txt");
+    try editorOpenFile(&config, "src/editor.zig");
 
     while (true) {
         try editorRefreshScreen(&config);
