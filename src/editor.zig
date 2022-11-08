@@ -9,15 +9,20 @@ const C = @cImport({
 
 const ziloVerison = "0.0.1";
 
+fn ArrayList2D(comptime T: type) type {
+    return std.ArrayList(std.ArrayList(T));
+}
+
 const Config = struct {
     cx: u8,
     cy: u8,
     row: u16,
     col: u16,
+    text: ArrayList2D(u8),
 };
 
 pub const EditorError = error {
-    ReadKeyFail, DrawFail,
+    ReadKeyFail, DrawFail, OpenFileFail,
 };
 
 fn ctrlKey(key: u8) u8 {
@@ -43,7 +48,7 @@ fn editorRefreshScreen(cfg: *const Config) EditorError!void {
         try buf.appendSlice("\x1b[2J");
         try buf.appendSlice("\x1b[H");
 
-        try editorDrawRows(c, &buf);
+        try editorDraw(c, &buf);
 
         var cmdBuf: [32]u8 = undefined;
         var cmd = try std.fmt.bufPrint(&cmdBuf, "\x1b[{};{}H", .{c.cy + 1, c.cx + 1});
@@ -55,12 +60,23 @@ fn editorRefreshScreen(cfg: *const Config) EditorError!void {
     } }.errFn(cfg) catch return EditorError.DrawFail;
 }
 
-fn editorDrawRows(cfg: *const Config, buf: *std.ArrayList(u8)) !void {
+fn editorDraw(cfg: *const Config, buf: *std.ArrayList(u8)) !void {
     var i: usize = 0;
+    for (cfg.text.items) |row| {
+        i += 1;
+        if (i == cfg.row) break;
+
+        try buf.appendSlice(row.items);
+        try buf.appendSlice("\r\n");
+    }
+
+    var welcomeFlag = (cfg.text.items.len == 0);
     while (i < cfg.row) : (i += 1) {
-        if (i == cfg.row / 3) {
+        if (i == cfg.row / 3 and welcomeFlag) {
             var welcomeBuf: [80]u8 = undefined;
-            var welcome = try std.fmt.bufPrint(&welcomeBuf, "Welcome to Zilo {s}!", .{ ziloVerison });
+            var welcome = try std.fmt.bufPrint(&welcomeBuf,
+                "Welcome to Zilo {s}!", .{ ziloVerison }
+            );
             if (welcome.len > cfg.col) {
                 welcome = welcome[0..cfg.col];
             }
@@ -107,7 +123,7 @@ fn editorMoveCursor(cfg: * Config, key: u8) void {
     }
 }
 
-fn initEditor() Config {
+fn editorInit() Config {
     const win = getWindow();
 
     return Config {
@@ -115,26 +131,58 @@ fn initEditor() Config {
         .cy = 0,
         .row = win.row,
         .col = win.col,
+        .text = ArrayList2D(u8).init(std.heap.page_allocator),
     };
 }
 
-fn editorExit() void {
+fn editorClearText(cfg: *Config) void {
+    for (cfg.text.items) |*row| {
+        row.clearAndFree();
+    }
+    cfg.text.clearAndFree();
+}
+
+fn editorOpenFile(cfg: *Config, filename: []const u8) !void {
+    struct { fn errFn(c: *Config, f: []const u8) !void {
+        // Maybe we should ask the user if they want to save the file first
+        editorClearText(c);
+
+        var file = try std.fs.cwd().openFile(f, .{});
+        defer file.close();
+
+        const bufferSize = 1024;
+        const allocator = std.heap.page_allocator;
+        const fileBuf = try file.readToEndAlloc(allocator, bufferSize);
+        defer allocator.free(fileBuf);
+
+        var iter = std.mem.split(u8, fileBuf, "\n");
+        while (iter.next()) |line| {
+            var row = std.ArrayList(u8).init(allocator);
+
+            try row.appendSlice(line);
+            try c.text.append(row);
+        }
+    } }.errFn(cfg, filename) catch return EditorError.OpenFileFail;
+}
+
+fn editorExit(cfg: *Config) void {
+    editorClearText(cfg);
     _ = C.write(C.STDIN_FILENO, "\x1b[?25l", 6);
     _ = C.write(C.STDIN_FILENO, "\x1b[H", 3);
 }
 
 pub fn editorProgress() EditorError!void {
-    var config = initEditor();
+    var config = editorInit();
+    defer editorExit(&config);
+
+    try editorOpenFile(&config, "test.txt");
 
     while (true) {
         try editorRefreshScreen(&config);
 
         const c = try editorReadKey();
         switch (c) {
-            ctrlKey('q') => {
-                editorExit();
-                return;
-            },
+            ctrlKey('q') => return,
             'h', 'j', 'k', 'l' => editorMoveCursor(&config, c),
             else => {},
         }
