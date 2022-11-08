@@ -13,6 +13,23 @@ fn ArrayList2D(comptime T: type) type {
     return std.ArrayList(std.ArrayList(T));
 }
 
+const CommandKeyTag = enum {
+    up, down, left, right,
+    backspace,
+    char,
+    none,
+};
+
+const CommandKey = union(CommandKeyTag) {
+    up: void,
+    down: void,
+    left: void,
+    right: void,
+    backspace: void,
+    char: u8,
+    none: void,
+};
+
 const Config = struct {
     cx: u8,
     cy: u8,
@@ -102,7 +119,7 @@ fn editorDraw(cfg: *const Config, buf: *std.ArrayList(u8)) !void {
     }
 }
 
-fn editorReadKey() EditorError!u8 {
+fn editorReadKey() EditorError!CommandKey {
     var nread: isize = 0;
     var c: u8 = 0;
     while (nread != 1) {
@@ -111,27 +128,67 @@ fn editorReadKey() EditorError!u8 {
             return error.ReadKeyFail;
         }
     }
-    return c;
+
+    if (c == '\x1b') {
+        var seq: [3]u8 = undefined;
+        if (C.read(C.STDIN_FILENO, &seq[0], 1) != 1) return .none;
+        if (C.read(C.STDIN_FILENO, &seq[1], 1) != 1) return .none;
+
+        if (seq[0] == '[') {
+            switch (seq[1]) {
+                'A' => return .up,
+                'B' => return .down,
+                'C' => return .right,
+                'D' => return .left,
+                else => return .none,
+            }
+        }
+
+        return .none;
+    } else {
+        return .{ .char = c };
+    }
 }
 
-fn editorMoveCursor(cfg: * Config, key: u8) void {
+fn editorMoveCursorLeft(cfg: *Config) void {
+    if (cfg.cx != 0) { cfg.cx -= 1; }
+}
+
+fn editorMoveCursorDown(cfg: *Config) void {
+    const ry = cfg.cy + cfg.cur;
+    const row = std.mem.min(u64, &[_]u64{
+        cfg.row, cfg.text.items.len - cfg.cur
+    });
+    if (cfg.cy != row - 1) { cfg.cy += 1; }
+    else if (cfg.cy == cfg.row - 1 and ry != cfg.text.items.len - 1) {
+        cfg.cur += 1;
+    }
+}
+
+fn editorMoveCursorUp(cfg: *Config) void {
+    if (cfg.cy != 0) { cfg.cy -= 1; }
+    else if (cfg.cur != 0) { cfg.cur -= 1; }
+}
+
+fn editorMoveCursorRight(cfg: *Config) void {
+    if (cfg.cx != cfg.col - 1) { cfg.cx += 1; }
+}
+
+fn editorMoveCursor(cfg: *Config, key: CommandKey) void {
     switch (key) {
-        'h' => if (cfg.cx != 0) { cfg.cx -= 1; },
-        'j' => {
-            const ry = cfg.cy + cfg.cur;
-            const row = std.mem.min(u64, &[_]u64{
-                cfg.row, cfg.text.items.len - cfg.cur
-            });
-            if (cfg.cy != row - 1) { cfg.cy += 1; }
-            else if (cfg.cy == cfg.row - 1 and ry != cfg.text.items.len - 1) {
-                cfg.cur += 1;
+        .left => editorMoveCursorLeft(cfg),
+        .down => editorMoveCursorDown(cfg),
+        .up => editorMoveCursorUp(cfg),
+        .right => editorMoveCursorRight(cfg),
+        .char => |ch| {
+            switch (ch) {
+                'h' => editorMoveCursorLeft(cfg),
+                'j' => editorMoveCursorDown(cfg),
+                'k' => editorMoveCursorUp(cfg),
+                'l' => editorMoveCursorRight(cfg),
+                else => unreachable,
             }
         },
-        'k' => {
-            if (cfg.cy != 0) { cfg.cy -= 1; }
-            else if (cfg.cur != 0) { cfg.cur -= 1; }
-        },
-        'l' => if (cfg.cx != cfg.col - 1) { cfg.cx += 1; },
         else => unreachable,
     }
 }
@@ -196,8 +253,14 @@ pub fn editorProgress() EditorError!void {
 
         const c = try editorReadKey();
         switch (c) {
-            ctrlKey('q') => return,
-            'h', 'j', 'k', 'l' => editorMoveCursor(&config, c),
+            .char => |ch| {
+                switch (ch) {
+                    ctrlKey('q'), 'q' => return,
+                    'h', 'j', 'k', 'l' => editorMoveCursor(&config, c),
+                    else => {},
+                }
+            },
+            .up, .down, .left, .right => editorMoveCursor(&config, c),
             else => {},
         }
     }
