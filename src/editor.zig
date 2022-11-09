@@ -33,9 +33,11 @@ const CommandKey = union(CommandKeyTag) {
 const Config = struct {
     cx: u8,
     cy: u8,
-    cur: u8, // the first line on the screen
-    row: u16,
-    col: u16,
+    rx: u8,
+    rowOff: u8,
+    colOff: u8,
+    row: u8,
+    col: u8,
     text: ArrayList2D(u8),
 };
 
@@ -80,11 +82,15 @@ fn editorRefreshScreen(cfg: *const Config) EditorError!void {
 
 fn editorDraw(cfg: *const Config, buf: *std.ArrayList(u8)) !void {
     var i: usize = 0;
-    for (cfg.text.items[cfg.cur..]) |row| {
+    for (cfg.text.items[cfg.rowOff..]) |row| {
         i += 1;
         if (i == cfg.row) break;
 
-        try buf.appendSlice(row.items);
+        if (row.items.len > cfg.col + cfg.colOff) {
+            try buf.appendSlice(row.items[cfg.colOff..(cfg.colOff + cfg.col)]);
+        } else if (row.items.len > cfg.colOff) {
+            try buf.appendSlice(row.items[cfg.colOff..]);
+        }
         try buf.appendSlice("\r\n");
     }
 
@@ -150,28 +156,63 @@ fn editorReadKey() EditorError!CommandKey {
     }
 }
 
-fn editorMoveCursorLeft(cfg: *Config) void {
-    if (cfg.cx != 0) { cfg.cx -= 1; }
+fn editorSetCursorX(cfg: *Config, r: u8) void {
+    if (r >= cfg.colOff + cfg.col) {
+        cfg.cx = cfg.col - 1;
+        cfg.colOff = r - cfg.cx;
+    } else if (r < cfg.colOff) {
+        cfg.cx = 0;
+        cfg.colOff = r - cfg.cx;
+    } else {
+        cfg.cx = r - cfg.colOff;
+    }
 }
 
-fn editorMoveCursorDown(cfg: *Config) void {
-    const ry = cfg.cy + cfg.cur;
-    const row = std.mem.min(u64, &[_]u64{
-        cfg.row, cfg.text.items.len - cfg.cur
-    });
-    if (cfg.cy != row - 1) { cfg.cy += 1; }
-    else if (cfg.cy == cfg.row - 1 and ry != cfg.text.items.len - 1) {
-        cfg.cur += 1;
+fn editorMoveCursorLeft(cfg: *Config) void {
+    if (cfg.cx != 0) { cfg.cx -= 1; }
+    else if (cfg.colOff != 0) { cfg.colOff -= 1; }
+    cfg.rx = cfg.cx + cfg.colOff;
+}
+
+fn editorMoveCursorRight(cfg: *Config) void {
+    const dx = cfg.cx + cfg.colOff;
+    const dy = cfg.cy + cfg.rowOff;
+    const lineLen =
+        if (dy < cfg.text.items.len) cfg.text.items[dy].items.len else 0;
+
+    if (cfg.cx + 1 < std.mem.min(u64, &[_]u64{ cfg.col, lineLen })) {
+        cfg.cx += 1;
+    } else if (cfg.cx + 1 == cfg.col and
+               dx + 1 < lineLen) {
+        cfg.colOff += 1;
     }
+    cfg.rx = cfg.cx + cfg.colOff;
 }
 
 fn editorMoveCursorUp(cfg: *Config) void {
     if (cfg.cy != 0) { cfg.cy -= 1; }
-    else if (cfg.cur != 0) { cfg.cur -= 1; }
+    else if (cfg.rowOff != 0) { cfg.rowOff -= 1; }
+
+    const newDy = cfg.cy + cfg.rowOff;
+    editorSetCursorX(cfg, @intCast(u8, std.mem.min(u64, &[_]u64{
+        cfg.rx, cfg.text.items[newDy].items.len
+    })));
 }
 
-fn editorMoveCursorRight(cfg: *Config) void {
-    if (cfg.cx != cfg.col - 1) { cfg.cx += 1; }
+fn editorMoveCursorDown(cfg: *Config) void {
+    var dy = cfg.cy + cfg.rowOff;
+    const row = std.mem.min(u64, &[_]u64{
+        cfg.row, cfg.text.items.len - cfg.rowOff
+    });
+    if (cfg.cy + 1 < row) { cfg.cy += 1; }
+    else if (cfg.cy + 1 == cfg.row and dy + 1 < cfg.text.items.len) {
+        cfg.rowOff += 1;
+    }
+
+    const newDy = cfg.cy + cfg.rowOff;
+    editorSetCursorX(cfg, @intCast(u8, std.mem.min(u64, &[_]u64{
+        cfg.rx, cfg.text.items[newDy].items.len
+    })));
 }
 
 fn editorMoveCursor(cfg: *Config, key: CommandKey) void {
@@ -199,9 +240,11 @@ fn editorInit() Config {
     return Config {
         .cx = 0,
         .cy = 0,
-        .cur = 0,
-        .row = win.row,
-        .col = win.col,
+        .rx = 0,
+        .rowOff = 0,
+        .colOff = 0,
+        .row = @intCast(u8, win.row),
+        .col = @intCast(u8, win.col),
         .text = ArrayList2D(u8).init(std.heap.page_allocator),
     };
 }
@@ -246,7 +289,7 @@ pub fn editorProgress() EditorError!void {
     var config = editorInit();
     defer editorExit(&config);
 
-    try editorOpenFile(&config, "src/editor.zig");
+    try editorOpenFile(&config, "test.txt");
 
     while (true) {
         try editorRefreshScreen(&config);
