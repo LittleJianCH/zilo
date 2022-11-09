@@ -1,4 +1,5 @@
 const std = @import("std");
+const utils = @import("utils.zig");
 
 const C = @cImport({
     @cInclude("ctype.h");
@@ -70,9 +71,7 @@ fn editorRefreshScreen(cfg: *const Config) EditorError!void {
 
         try editorDraw(c, &buf);
 
-        var cmdBuf: [32]u8 = undefined;
-        var cmd = try std.fmt.bufPrint(&cmdBuf, "\x1b[{};{}H", .{c.cy + 1, c.cx + 1});
-        try buf.appendSlice(cmd);
+        try utils.bufAppendWithFmt(32, &buf, "\x1b[{};{}H", .{c.cy + 1, c.cx + 1});
 
         try buf.appendSlice("\x1b[?25h");
 
