@@ -285,11 +285,13 @@ fn editorExit(cfg: *Config) void {
     _ = C.write(C.STDIN_FILENO, "\x1b[H", 3);
 }
 
-pub fn editorProgress() EditorError!void {
+pub fn editorProgress(args: [][:0]u8) EditorError!void {
     var config = editorInit();
     defer editorExit(&config);
 
-    try editorOpenFile(&config, "test.txt");
+    if (args.len > 1) {
+        try editorOpenFile(&config, args[1]);
+    }
 
     while (true) {
         try editorRefreshScreen(&config);
