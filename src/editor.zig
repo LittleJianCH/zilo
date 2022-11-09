@@ -195,7 +195,8 @@ fn editorMoveCursorUp(cfg: *Config) void {
 
     const newDy = cfg.cy + cfg.rowOff;
     editorSetCursorX(cfg, @intCast(u8, std.mem.min(u64, &[_]u64{
-        cfg.rx, cfg.text.items[newDy].items.len
+        cfg.rx,
+        if (newDy < cfg.text.items.len) cfg.text.items[newDy].items.len else 0,
     })));
 }
 
@@ -211,7 +212,8 @@ fn editorMoveCursorDown(cfg: *Config) void {
 
     const newDy = cfg.cy + cfg.rowOff;
     editorSetCursorX(cfg, @intCast(u8, std.mem.min(u64, &[_]u64{
-        cfg.rx, cfg.text.items[newDy].items.len
+        cfg.rx,
+        if (newDy < cfg.text.items.len) cfg.text.items[newDy].items.len else 0,
     })));
 }
 
